@@ -18,7 +18,6 @@ def sase(inp_struct):
     '''
     SASE 1D FEL run function
     Input:
-    Nruns                       # Number of runs
     npart                       # n-macro-particles per bucket 
     s_steps                     # n-sample points along bunch length
     z_steps                     # n-sample points along undulator
@@ -79,10 +78,29 @@ def sase(inp_struct):
     final_params.update(FEL_data)
     final_params.update(FEL_params)
     final_data=final_calc(**final_params)
-        
-    return final_data
 
-def params_calc(Nruns,npart,s_steps,z_steps,energy,eSpread,\
+    #unpack outputs
+    gainLength    = params['gainLength']
+    resWavelength = params['resWavelength']
+    thet_out      = final_data['thet_out']
+    eta_out       = final_data['eta_out']
+    bunching      = FEL_data['bunching']
+    
+    Ns       = params['Ns']
+    history  = final_data['history']
+    spectrum = history['spectrum']
+    freq     = history['freq']
+    z        = history['z']
+    power_z  = history['power_z']
+    s        = history['s']
+    power_s  = history['power_s']
+    rho      = history['rho']
+    detune   = history['detune']
+    field    = history['field']
+    field_s  = history['field_s']
+    return z,power_z,s,power_s,rho,detune,field,field_s,gainLength,resWavelength,thet_out,eta_out,bunching,spectrum,freq,Ns,history
+
+def params_calc(npart,s_steps,z_steps,energy,eSpread,\
             emitN,currentMax,beta,unduPeriod,unduK,unduL,radWavelength,\
             dEdz,iopt,P0,constseed,particle_position,hist_rule):
     '''
@@ -90,41 +108,46 @@ def params_calc(Nruns,npart,s_steps,z_steps,energy,eSpread,\
     '''
     # whether to use constant random seed for reproducibility
     if constseed==1:
-        #np.random.seed(22)
         np.random.seed(31)
+
+    #Check if unduK is array
+    if not isinstance(np.ndarray):
+        unduK = unduK*np.array([1])
+
     unduJJ  = scipy.special.jv(0,unduK**2/(4+2*unduK**2))\
               -scipy.special.jv(1,unduK**2/(4+2*unduK**2))  # undulator JJ
     gamma0  = energy/mc2                                    # central energy of the beam in unit of mc2
     sigmaX2 = emitN*beta/gamma0                             # rms transverse size, divergence of the electron beam
 
-    kappa_1=e*unduK*unduJJ/4/epsilon_0/gamma0
-    density=currentMax/(e*c*2*np.pi*sigmaX2)
-    Kai=e*unduK*unduJJ/(2*gamma0**2*mc2*e)
-    ku=2*np.pi/unduPeriod
+    kappa_1 = e*unduK*unduJJ/4/epsilon_0/gamma0
+    density = currentMax/(e*c*2*np.pi*sigmaX2)
+    Kai     = e*unduK*unduJJ/(2*gamma0**2*mc2*e)
+    ku      = 2*np.pi/unduPeriod
 
 
     rho     = (0.5/gamma0)*((currentMax/alfvenCurrent)\
               *(unduPeriod*unduK*unduJJ/(2*np.pi))**2\
               /(2*sigmaX2))**(1/3)                          # FEL Pierce parameter
+    
     resWavelength = unduPeriod*(1+unduK[0]**2/2.0)\
                     /(2*gamma0**2)                          # resonant wavelength
 
     #Pbeam   = energy*currentMax*1000.0                     # rho times beam power [GW]
-    Pbeam   = energy*currentMax                             # beam power [W]
+    Pbeam      = energy*currentMax                          # beam power [W]
     coopLength = resWavelength/unduPeriod                   # cooperation length
     gainLength = 1                                          # rough gain length
-    #cs0  = bunchLength/coopLength                           # bunch length in units of cooperation length     
-    z0    = unduL#/gainLength                                # wiggler length in units of gain length
+    #cs0  = bunchLength/coopLength                          # bunch length in units of cooperation length     
+    z0    = unduL#/gainLength                               # wiggler length in units of gain length
     delt  = z0/z_steps                                      # integration step in z0 ~ 0.1 gain length
     dels  = delt                                            # integration step in s0 must be same as in z0 
-    E02   = density*kappa_1[0]*P0*1E-9/Pbeam/Kai[0]                              # scaled input power
+    E02   = density*kappa_1[0]*P0/Pbeam/Kai[0]              # scaled input power
     gbar  = (resWavelength-radWavelength)\
             /(radWavelength)                                # scaled detune parameter
     delg  = eSpread                                         # Gaussian energy spread in units of rho 
     Ns    = currentMax*unduL/unduPeriod/z_steps\
             *resWavelength/c/e                              # N electrons per s-slice [ ]
-    #Eloss = -dEdz*1E-3/energy/rho*gainLength                # convert dEdz to alpha parameter
-    deta = np.sqrt((1+0.5*unduK[0]**2)/(1+0.5*unduK**2))-1
+    #Eloss = -dEdz*1E-3/energy/rho*gainLength               # convert dEdz to alpha parameter
+    deta  = np.sqrt((1+0.5*unduK[0]**2)/(1+0.5*unduK**2))-1
 
 
 
@@ -136,7 +159,7 @@ def params_calc(Nruns,npart,s_steps,z_steps,energy,eSpread,\
 
 
 
-def FEL_process(Nruns,npart,z_steps,energy,eSpread,\
+def FEL_process(npart,z_steps,energy,eSpread,\
             emitN,currentMax,beta,unduPeriod,unduK,unduL,radWavelength,\
             dEdz,iopt,P0,constseed,particle_position,hist_rule,\
             unduJJ,gamma0,sigmaX2,kappa_1,density,\
@@ -144,36 +167,36 @@ def FEL_process(Nruns,npart,z_steps,energy,eSpread,\
             delt,dels,E02,gbar,delg,Ns,deta,\
             thet_init,eta_init,N_real,s_steps,rho,gainLength):    
 
-    s = np.arange(1,s_steps+1)*dels*coopLength*1.0e6        # longitundinal steps along beam in micron ? meter           
-    z = np.arange(1,z_steps+1)*delt*gainLength              # longitundinal steps along undulator in meter
+    s = np.arange(1,s_steps+1)*dels*coopLength*1.0e6      # longitundinal steps along beam in micron ? meter           
+    z = np.arange(1,z_steps+1)*delt*gainLength            # longitundinal steps along undulator in meter
 
-    bunchLength=s[-1]*1e-6                              # beam length in meter
-    bunch_steps=np.round(bunchLength/delt/coopLength)       # rms (Gaussian) or half width (flattop) bunch length in s_step
-    shape=N_real/np.max(N_real)
+    bunchLength = s[-1]*1e-6                              # beam length in meter
+    bunch_steps = np.round(bunchLength/delt/coopLength)   # rms (Gaussian) or half width (flattop) bunch length in s_step
+    shape       = N_real/np.max(N_real)
 
     # sase mode is chosen, go over all slices of the bunch starting from the tail k=1
     if iopt=='sase': 
         # initialization of variables during the 1D FEL process
-        Er=np.zeros((s_steps+1,z_steps+1))
-        Ei=np.zeros((s_steps+1,z_steps+1))
-        eta=np.zeros((npart,z_steps+1))
-        thet_output=np.zeros((npart,z_steps+1))
-        thethalf=np.zeros((npart,z_steps+1))
-        thet_out=np.zeros((s_steps,1))
-        bunching=np.zeros((s_steps,z_steps),dtype=complex)
+        Er  = np.zeros((s_steps+1,z_steps+1))
+        Ei  = np.zeros((s_steps+1,z_steps+1))
+        eta = np.zeros((npart,z_steps+1))
+        thet_output = np.zeros((npart,z_steps+1))
+        thethalf    = np.zeros((npart,z_steps+1))
+        thet_out    = np.zeros((s_steps,1))
+        bunching    = np.zeros((s_steps,z_steps),dtype=complex)
         for k in range(s_steps):
-            Er[k,0] = np.sqrt(E02)                                              # input seed signal
-            Ei[k,0] = 0.0
-            thet0=thet_init[k,:]
-            eta0=eta_init[k,:]
+            Er[k,0]  = np.sqrt(E02)                                              # input seed signal
+            Ei[k,0]  = 0.0
+            thet0    = thet_init[k,:]
+            eta0     = eta_init[k,:]
             eta[:,0] = eta0.T
-            thet_output[:,0]=thet0.T                                                   # eta at j=1
-            thethalf[:,0] = thet0.T-2*ku*eta[:,0]*delt/2                             # half back
-            thet_out[k,0]=np.mean(thet0.T)
+            thet_output[:,0] = thet0.T                                                   # eta at j=1
+            thethalf[:,0]    = thet0.T-2*ku*eta[:,0]*delt/2                             # half back
+            thet_out[k,0]    = np.mean(thet0.T)
             for j in range(z_steps):                                            # evolve e and eta in s and t by leap-frog
-                thet = thethalf[:,j]+2*ku*(eta[:,j]+deta[j])*delt/2
+                thet   = thethalf[:,j]+2*ku*(eta[:,j]+deta[j])*delt/2
                 sumsin = np.sum(np.sin(thet))
-                sumcos = np.sum(np.cos(thet))
+                sumcos = np.sum(np.cos(thet)
                 sinavg = shape[k]*sumsin/npart
                 cosavg = shape[k]*sumcos/npart
                 Erhalf = Er[k,j]+kappa_1[j]*density * cosavg*dels/2   #minus sign 
@@ -181,18 +204,19 @@ def FEL_process(Nruns,npart,z_steps,energy,eSpread,\
                 thethalf[:,j+1] = thethalf[:,j]+2*ku*(eta[:,j]+deta[j])*delt
                 eta[:,j+1] = eta[:,j]-2*Kai[j]*Erhalf*np.cos(thethalf[:,j+1])*delt\
                              +2*Kai[j]*Eihalf*np.sin(thethalf[:,j+1])*delt#-Eloss*delt  #Eloss*delt to simulate the taper
-                thet_output[:,j+1]=thet
+                
+                thet_output[:,j+1] = thet
                 sumsin = np.sum(np.sin(thethalf[:,j+1]))
                 sumcos = np.sum(np.cos(thethalf[:,j+1]))
                 sinavg = shape[k]*sumsin/npart
                 cosavg = shape[k]*sumcos/npart
                 Er[k+1,j+1] = Er[k,j]+kappa_1[j]*density *cosavg*dels                               # apply slippage condition
                 Ei[k+1,j+1] = Ei[k,j]-kappa_1[j]*density *sinavg*dels
-                bunching[k,j]=np.mean(np.real(np.exp(-1j*thet)))\
+                bunching[k,j] = np.mean(np.real(np.exp(-1j*thet)))\
                               +np.mean(np.imag(np.exp(-1j*thet)))*1j            #bunching factor calculation
     return {'Er':Er,'Ei':Ei,'thet_output':thet_output,'eta':eta,'s':s,'z':z,'bunching':bunching,'bunchLength':bunchLength}
 
-def final_calc(Nruns,npart,z_steps,energy,eSpread,\
+def final_calc(npart,z_steps,energy,eSpread,\
             emitN,currentMax,beta,unduPeriod,unduK,unduL,radWavelength,\
             dEdz,iopt,P0,constseed,particle_position,hist_rule,\
             unduJJ,gamma0,sigmaX2,kappa_1,density,\
@@ -202,41 +226,41 @@ def final_calc(Nruns,npart,z_steps,energy,eSpread,\
             Er,Ei,thet_output,eta,s,z,rho,gainLength,bunching,bunchLength):
  
     #converting a and eta to field, power and etaavg
-    power_s=np.zeros((z_steps,s_steps))
-    power_z=np.zeros(z_steps)
-    etaavg=np.zeros(z_steps)
+    power_s = np.zeros((z_steps,s_steps))
+    power_z = np.zeros(z_steps)
+    etaavg  = np.zeros(z_steps)
     for j in range(z_steps):
         for k in range(s_steps):
             power_s[j,k] = (Er[k+1,j]**2+Ei[k+1,j]**2)*Kai[j]/(density*kappa_1[j])*Pbeam
         power_z[j] = np.sum(Er[:,j]**2+Ei[:,j]**2)*Kai[j]/(density*kappa_1[j])*Pbeam/s_steps
-        etaavg[j] = np.sum(eta[:,j+1])/npart                                # average electron energy at every z position
-        thet_out=0                                                          # don't output phase space
-        eta_out=0
-    detune = 2*np.pi/(dels*s_steps)*np.arange(-s_steps/2,s_steps/2+1)
-    field = (Er[:,z_steps]+Ei[:,z_steps]*1j)*np.sqrt(Kai[z_steps-1]/(density*kappa_1[z_steps-1])*Pbeam)
-    field_s = (Er[:,:]+Ei[:,:]*1j)*np.sqrt(np.concatenate((np.array([Kai[0]]),Kai))[np.newaxis,:]/(density*np.concatenate((np.array([kappa_1[0]]),kappa_1))[np.newaxis,:]*Pbeam))
-    pfft = np.fft.fft(field_s[:,1:],axis=1)
+        etaavg[j]  = np.sum(eta[:,j+1])/npart # average electron energy at every z position
+        thet_out   = 0 # don't output phase space
+        eta_out    = 0
+    detune   = 2*np.pi/(dels*s_steps)*np.arange(-s_steps/2,s_steps/2+1)
+    field    = (Er[:,z_steps]+Ei[:,z_steps]*1j)*np.sqrt(Kai[z_steps-1]/(density*kappa_1[z_steps-1])*Pbeam)
+    field_s  = (Er[:,:]+Ei[:,:]*1j)*np.sqrt(np.concatenate((np.array([Kai[0]]),Kai))[np.newaxis,:]/(density*np.concatenate((np.array([kappa_1[0]]),kappa_1))[np.newaxis,:]*Pbeam))
+    pfft     = np.fft.fft(field_s[:,1:],axis=1)
     spectrum = np.fft.fftshift(np.absolute(pfft)**2)
-    omega=hbar * 2.0 * np.pi / (resWavelength/c)
-    df=hbar * 2.0 * np.pi*1/(bunchLength/c)
-    freq = np.linspace(omega - s_steps/2 * df, omega + s_steps/2 * df,s_steps)
-    history={'z':z,'power_z':power_z,'s':s,'power_s':power_s,'field':field,'field_s':field_s,'thet_output':thet_output,'eta':eta,'rho':rho,'detune':detune,'iopt':iopt,'spectrum':spectrum,'freq':freq}        
+    omega    = hbar * 2.0 * np.pi / (resWavelength/c)
+    df       = hbar * 2.0 * np.pi*1/(bunchLength/c)
+    freq     = np.linspace(omega - s_steps/2 * df, omega + s_steps/2 * df,s_steps)
+    history  = {'z':z,'power_z':power_z,'s':s,'power_s':power_s,'field':field,'field_s':field_s,'thet_output':thet_output,'eta':eta,'rho':rho,'detune':detune,'iopt':iopt,'spectrum':spectrum,'freq':freq}        
 
     return {'history':history,'thet_out':thet_out,'eta_out':eta_out}
 
 
 
 def plot_log_power_z(history):
-    z=history['z']
-    power_z=history['power_z']
+    z       = history['z']
+    power_z = history['power_z']
     plt.figure()
     plt.plot(z,np.log10(power_z))
     plt.xlabel('z (m)')
     plt.ylabel('log(P) (W)')
 
 def plot_power_s(history):
-    s=history['s']
-    power_s=history['power_s']
+    s = history['s']
+    power_s = history['power_s']
     plt.figure()
     for i in range(power_s.shape[0]):
         plt.plot(s,power_s[i,:])
@@ -244,11 +268,11 @@ def plot_power_s(history):
     plt.ylabel('power at different z positions (W)')
 
 def plot_phase_space(history):
-    z=history['z']
-    thet_output=history['thet_output']
-    eta=history['eta']
-    iopt=history['iopt']
-    rho=history['rho']
+    z = history['z']
+    thet_output = history['thet_output']
+    eta  = history['eta']
+    iopt = history['iopt']
+    rho  = history['rho']
     for j in range(z.shape[0]):
         plt.figure()
         plt.plot(thet_output[:,j],eta[:,j],'.')
@@ -265,9 +289,9 @@ def plot_phase_space(history):
 
 def plot_pspec(history):
     #need to modify
-    field=history['field']
-    rho=history['rho']
-    detune=history['detune']
+    field  = history['field']
+    rho    = history['rho']
+    detune = history['detune']
     plt.figure()
     fieldFFT = np.fftshift(np.fft(field.T))                  # unconjugate complex transpose by .'
     Pspec=fieldFFT*np.conj(fieldFFT)
@@ -279,11 +303,11 @@ def plot_pspec(history):
 
 def plot_norm_power_s(history):
     #need to modify
-    power_s=history['power_s']
-    z=history['z']
-    s=history['s']
-    z_steps=z.shape[0]
-    s_steps=s.shape[0]
+    power_s = history['power_s']
+    z = history['z']
+    s = history['s']
+    z_steps = z.shape[0]
+    s_steps = s.shape[0]
     Y,X = np.meshgrid(z[1:],s);
     p_norm = power_s[1:,:]
     for k in np.arange(0,z_steps-1):
